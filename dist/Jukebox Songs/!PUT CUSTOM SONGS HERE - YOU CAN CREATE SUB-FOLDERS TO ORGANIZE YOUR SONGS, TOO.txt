@@ -1,0 +1,59 @@
+JUKEBOX INFINITY - THE JUKEBOX SONGS FOLDER
+===========================================
+
+This file is only a guide. You can delete it - the mod does not need it.
+
+
+WHAT GOES HERE
+--------------
+Put your own songs in this folder (TEKKEN 7\TekkenGame\Binaries\Win64\Jukebox Songs).
+Supported formats:
+
+  .mp3  and  .wav    - any normal music file
+  .wem               - Wwise audio files (e.g. songs from other Tekken games or mods)
+
+Other files (like this one, or Song Loops.txt) are ignored by the Song Browser.
+
+
+SUB-FOLDERS
+-----------
+You can create sub-folders to organise your songs, for example:
+
+  Jukebox Songs\Tekken 3\
+  Jukebox Songs\Tekken Tag Tournament 2\
+  Jukebox Songs\My Favourites\
+
+Every folder directly inside "Jukebox Songs" becomes its own folder in the Song Browser.
+Songs in deeper folders (e.g. Jukebox Songs\Tekken 3\Arcade\) are listed in their
+top folder ("Tekken 3").
+Songs placed directly in "Jukebox Songs" (not in a sub-folder) are listed under "Uncategorized".
+
+In the Song Browser, switch folders with LB / RB (or Left / Right on the folder row).
+
+
+SONG NAMES
+----------
+The Song Browser shows each song's file name, so name your files the way you want them to
+appear (e.g. "Tekken 3 - Jin Kazama.mp3").
+
+
+ADDING SONGS WHILE THE GAME IS RUNNING
+--------------------------------------
+In the Playlist Editor, press X (Refresh Folders) to pick up new or renamed songs.
+Press the View / Back / Select button there to open this folder in File Explorer.
+
+
+LOOP POINTS
+-----------
+- .mp3 / .wav: set where a song loops in "Song Loops.txt" (in this folder). Without an entry,
+  the whole song loops.
+- .wem: the loop points stored inside the .wem file are used.
+
+Hold Y on a song in the Song Browser to preview its loop.
+
+
+RENAMING, MOVING OR DELETING SONGS
+----------------------------------
+Assigned songs are remembered by their path inside this folder. If you rename, move or delete
+a song that is assigned to a stage, the Playlist Editor marks it as a missing file and the
+game's own music plays there until you assign a song again.
