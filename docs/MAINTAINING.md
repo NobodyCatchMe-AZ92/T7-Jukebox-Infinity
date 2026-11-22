@@ -41,6 +41,8 @@ version line is rewritten once at startup, keeping the user's settings) and the 
 ## Common changes
 
 - **New stage or scene**: `kStages` in `src/library.hpp` (id + name); its game songs in `kVanillaTracks`.
+- **Song Sets**: `StageSets` in `src/library.hpp` (5 `Assign`s, `has[set][slot]`, `sel`), INI keys
+  `<id>.SetN.<slot>` / `<id>.Set`; the set is picked per scene entry in `cur_assign()` (`src/main.cpp`).
 - **Game song titles / order**: `kVanillaTracks` (`src/library.hpp`) - `{ bgm id, internal name, round, title,
   hidden, media, part start / end }`. `hidden` keeps a duplicate out of the browser (still labelled if assigned).
 - **Bonus Tracks**: `src/unused_tracks.hpp` - `{ media, title, copies, level_db, cat }`, kept alphabetical.
@@ -75,7 +77,8 @@ Jukebox DLL in the same folder stays inert. Settings, songs and logs stay in the
    Jukebox Infinity <ver>/Win64/Jukebox Songs/!PUT CUSTOM SONGS HERE ... .txt   (dist/Jukebox Songs/)
    Jukebox Infinity <ver>/Win64/t7jukebox/Jukebox Background.usm   (main download only; not in this repo)
    ```
-   Main file `JukeboxInfinity.zip` (with the video), secondary `JukeboxInfinityLITE.zip` (without).
+   Main file `Jukebox_Infinity_v<ver>.zip` (with the video), secondary `Jukebox_Infinity_LITE_v<ver>.zip`
+   (without), e.g. `Jukebox_Infinity_v1.1.zip` / `Jukebox_Infinity_LITE_v1.1.zip`.
 3. Privacy scan everything that goes public - the zips' contents and this repo:
    `set T7_PII_TERMS=<your real name>,<your email>` then `py tools/release/pii_scan.py <folder or file> ...`
    (searches UTF-8 and UTF-16, binaries too; terms are never printed). Short name terms can match inside ordinary

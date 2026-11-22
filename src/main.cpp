@@ -97,6 +97,7 @@ struct Ctx
 	Assign ra;              // this entry's assignment with every "Random: <folder>" slot resolved to one song
 	bool ra_ok = false;
 	int ra_scene = -1, ra_pl = -1;
+	unsigned ra_gen = 0;    // g_set.gen it was built from
 	std::wstring last_song; // the song (key) of that request
 	Pick pick;          // Random: the song of this scene entry
 	Pick pick2;         // Random + RandomSwitchAtMatchPoint: the song from match point on
@@ -266,15 +267,35 @@ std::wstring resolve_random(const std::wstring &rel)
 	logf("random folder: %s -> %s", narrow(rel).c_str(), narrow(p.rel).c_str());
 	return p.rel;
 }
-// the assignment of a scene for this entry: "Random: <folder>" slots resolved once per entry (g_mx held)
+// Song Sets (user, 2026-11-17): the set a scene plays this entry - the selected one, Set 1 when that one is
+// unassigned; Random Set = a pure random pick among the assigned sets (Set 1 always counts)
+int pick_set(const StageSets &ss)
+{
+	if (ss.sel != kSetRandom)
+		return ss.assigned(ss.sel) ? ss.sel : 0;
+	std::vector<int> pool;
+	for (int k = 0; k < kSets; ++k)
+		if (ss.assigned(k))
+			pool.push_back(k);
+	return pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(g_rng)];
+}
+// the assignment of a scene for this entry (g_mx held): its song set picked once per entry (Song Sets), unassigned
+// slots of that set filled with Set 1's, then "Random: <folder>" slots resolved once per entry. Rebuilt when the
+// settings change (g_set.gen).
 const Assign *cur_assign(int pl, int scene)
 {
-	const Assign *a = g_set.assign(pl, scene);
-	if (!a || (!is_random_rel(a->early) && !is_random_rel(a->final_) && !is_random_rel(a->special)))
-		return a;
-	if (!g_ctx.ra_ok || g_ctx.ra_scene != scene || g_ctx.ra_pl != pl)
+	const StageSets *ss = g_set.sets(pl, scene);
+	if (!ss)
+		return nullptr;
+	if (!g_ctx.ra_ok || g_ctx.ra_scene != scene || g_ctx.ra_pl != pl || g_ctx.ra_gen != g_set.gen)
 	{
-		g_ctx.ra = *a;
+		const int k = pick_set(*ss);
+		if (ss->sel != 0 || k != 0)
+			logf("song set: %s plays %s%s", narrow(stage_name(scene) ? stage_name(scene) : L"?").c_str(), narrow(set_name(k)).c_str(),
+			     ss->sel == kSetRandom ? " (Random Set)" : ss->sel != k ? " (the selected set is unassigned)" : "");
+		const Assign eff = ss->effective(k);
+		const Assign *a = &eff;
+		g_ctx.ra = eff;
 		for (int slot = 0; slot < 3; ++slot)
 			if (is_random_rel(g_ctx.ra.song(slot)))
 			{
@@ -292,7 +313,7 @@ const Assign *cur_assign(int pl, int scene)
 					logf("random folder: %s on slot %d keeps slot %d's song (one random song for the entire match)",
 					     narrow(a->song(slot)).c_str(), slot, same);
 			}
-		g_ctx.ra_ok = true, g_ctx.ra_scene = scene, g_ctx.ra_pl = pl;
+		g_ctx.ra_ok = true, g_ctx.ra_scene = scene, g_ctx.ra_pl = pl, g_ctx.ra_gen = g_set.gen;
 	}
 	return &g_ctx.ra;
 }
@@ -1401,7 +1422,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, void *)
 	}
 	g_log = _wfopen((g_dir + L"\\t7jukebox.log").c_str(), L"wt");
 	g_verbose = GetFileAttributesW((g_dir + L"\\debuglog.txt").c_str()) != INVALID_FILE_ATTRIBUTES;
-	logf("Jukebox Infinity %s (dev 151) loaded%s", narrow(kModVersion).c_str(), g_verbose ? " - debug log on (t7jukebox\\debuglog.txt)" : "");
+	logf("Jukebox Infinity %s (dev 154) loaded%s", narrow(kModVersion).c_str(), g_verbose ? " - debug log on (t7jukebox\\debuglog.txt)" : "");
 	CloseHandle(CreateThread(nullptr, 0, init_thread, nullptr, 0, nullptr));
 	return TRUE;
 }

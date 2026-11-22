@@ -1,6 +1,6 @@
 # Jukebox Infinity - a Jukebox for Tekken 7 (PC)
 
-**Version 1.0** - by t7jukeboxauthor
+**Version 1.1** - by t7jukeboxauthor
 
 Choose the music for every stage and menu in Tekken 7: the game's own soundtrack, 89 bonus tracks hidden in the
 game files, and your own `.mp3` / `.wav` / `.wem` songs - all set up in a Jukebox menu inside the game, restored in
@@ -9,6 +9,8 @@ the spirit of the PS4 version's Jukebox.
 - A **Jukebox** entry on the main menu, with playlists and a Playlist Editor built from the game's own menus.
 - **Two songs per stage** - Round 1 and Final Round (from match point) - plus a Special slot for Lars' and Leroy's
   character themes, and songs for the Main Menu, Character Select, Online Warm-Up and Customization.
+- **Song Sets**: up to 5 sets of songs per stage and menu (e.g. several matched Round 1 + Final Round pairs),
+  played as chosen or as a **Random Set** each match.
 - **Custom playlists** (3), **Random playlists** (everything / your songs / one folder) and per-stage
   "Random: <folder>" picks.
 - **Song preview** with loop preview, a **volume per song** (0-300%), **loop points** for mp3 / wav.
@@ -21,8 +23,8 @@ the spirit of the PS4 version's Jukebox.
 
 Get the latest release from the Releases page (or tekkenmods.com / nexusmods.com):
 
-- `JukeboxInfinity.zip` - the full mod with the Jukebox background video
-- `JukeboxInfinityLITE.zip` - the same without the video
+- `Jukebox_Infinity_v1.1.zip` - the full mod with the Jukebox background video
+- `Jukebox_Infinity_LITE_v1.1.zip` - the same without the video
 
 Copy the zip's `Win64` folder contents into `TEKKEN 7\TekkenGame\Binaries\Win64`. Full instructions, controls,
 troubleshooting and a guide to making `.wem` files: **[dist/README.txt](dist/README.txt)** (the README that ships

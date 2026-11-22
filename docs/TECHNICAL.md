@@ -16,7 +16,7 @@ Contents
 7. [mp3 / wav / PCM / ADPCM: the mod's own player](#7-mp3--wav--pcm--adpcm-the-mods-own-player)
 8. [The game's own files: paks, AES, the BGM table](#8-the-games-own-files-paks-aes-the-bgm-table)
 9. [Rounds, match point, character themes](#9-rounds-match-point-character-themes)
-10. [Random playlists](#10-random-playlists)
+10. [Random playlists](#10-random-playlists) (and Song Sets)
 11. [Loop preview and track parts (SeekOnEvent)](#11-loop-preview-and-track-parts-seekonevent)
 12. [Music pak mods](#12-music-pak-mods)
 13. [The main-menu entry](#13-the-main-menu-entry)
@@ -207,6 +207,20 @@ one top folder, `Tekken 7 Default` (game songs) or `Tekken 7 Bonus Tracks`. One 
 optionally a second pick at match point (`RandomSwitchAtMatchPoint`). The final-round switch is suppressed for
 Random by keeping the Normal states. Some BGM table entries have no media on PC (e.g. `CharaSelect_ac7`, bgm 49,
 the PS4 jukebox's old-Tekken tracks `T1_bgm_*`): they are excluded so a pick is never silent.
+
+### Song Sets (1.1)
+
+Every stage / scene of a Custom playlist is a `StageSets` (`src/library.hpp`): five `Assign`s (Round 1 / Final /
+Special song + volume each), `has[set][slot]` for Sets 2-5 (Set 1 is always assigned; `""` = the game's music) and
+`sel` (Set 1..5, or Random Set). `cur_assign()` (`src/main.cpp`) builds the assignment of a scene entry once - the
+same moment "Random: <folder>" slots are resolved: `pick_set()` takes the selected set (Set 1 when it is unassigned)
+or, for Random Set, a uniform pick among the assigned sets; `effective()` fills the set's unassigned slots with Set
+1's songs. Everything downstream (match-point switch, same-song continuation, character themes, volumes) sees one
+ordinary `Assign`, so sets needed no other playback change. The per-entry copy is rebuilt when the settings change
+(`Settings::gen`). INI: Set 1 keeps the pre-1.1 keys; Sets 2-5 write `<id>.SetN.Early|Final|Special[Volume]` only
+for assigned slots (`default` = the game's music, so an empty value never means "unassigned"); `<id>.Set` only when
+not Set 1. Editor: the stage row's right column (`ButtonSymbol_mc`, pinned like the volume) shows the set, with the
+volume arrows; the "*" moved into the row's unused left-aligned `Operation_mc` field (row x -240).
 
 ## 11. Loop preview and track parts (SeekOnEvent)
 

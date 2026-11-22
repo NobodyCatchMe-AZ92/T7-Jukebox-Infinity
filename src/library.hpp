@@ -421,7 +421,7 @@ inline bool is_special_state(const char *fin)
 {
 	return fin && (_stricmp(fin, "VREDE4") == 0 || _stricmp(fin, "NJPW") == 0 || _stricmp(fin, "LEROY") == 0);
 }
-constexpr const wchar_t *kModVersion = L"V1.0"; // shown in T7Jukebox.ini and the log
+constexpr const wchar_t *kModVersion = L"V1.1"; // shown in T7Jukebox.ini and the log
 // "Random: <folder>" as a stage / scene assignment (user, 2026-11-13): stored as "random:<key>"; each visit plays a
 // random song of that folder. Keys: a Jukebox Songs folder name, or (never a folder name - '*' is not allowed in
 // Windows names) *T7 = the Tekken 7 list, *BONUS = Tekken 7 Bonus Tracks, *UNCAT = files directly in Jukebox Songs
@@ -449,13 +449,53 @@ struct Assign
 	int &vol(int slot) { return slot == 2 ? special_vol : slot == 1 ? final_vol : early_vol; }
 };
 
+// Song Sets (user, 2026-11-17): every stage / menu scene of a Custom playlist has 5 sets of songs (Round 1 / Final /
+// Special each) and a selector: Set 1..5 or Random Set (a random ASSIGNED set per match / menu visit). Set 1 is always
+// assigned ("" = the game's music, as before Song Sets: the existing INI keys are Set 1). In Sets 2-5 a slot can be
+// "Unassigned" (no song chosen): it plays Set 1's song of that slot (user's option A); a set with no assigned slot at
+// all is unassigned - selected, it plays Set 1; Random Set skips it.
+constexpr int kSets = 5, kSetRandom = 5; // selector: 0..4 = Set 1..5, 5 = Random Set
+constexpr const wchar_t *kUnassignedRel = L"unassigned:"; // the editor's "No Song (Unassigned)" row (never a file)
+inline bool is_unassigned_rel(const std::wstring &rel) { return rel == kUnassignedRel; }
+struct StageSets
+{
+	Assign set[kSets];           // set[0] = Set 1
+	bool has[kSets][3] = {};     // Sets 2-5: slot assigned ("" with has = the game's music on purpose); set 0 ignores it
+	int sel = 0;                 // 0..4 = Set 1..5, kSetRandom = Random Set
+	bool assigned(int k) const { return k == 0 || has[k][0] || has[k][1] || has[k][2]; }
+	bool slot_assigned(int k, int slot) const { return k == 0 || has[k][slot]; }
+	// what a set plays: its own songs, Set 1's for its unassigned slots
+	Assign effective(int k) const
+	{
+		Assign a = set[0];
+		if (k > 0 && k < kSets)
+			for (int s = 0; s < 3; ++s)
+				if (has[k][s])
+					a.song(s) = set[k].song(s), a.vol(s) = set[k].vol(s);
+		return a;
+	}
+	// anything that is not the defaults (the stage list's "*"): a Set 1 song, or any assigned slot of Sets 2-5
+	bool customised() const
+	{
+		for (int s = 0; s < 3; ++s)
+			if (!set[0].song(s).empty())
+				return true;
+		for (int k = 1; k < kSets; ++k)
+			if (assigned(k))
+				return true;
+		return false;
+	}
+};
+inline std::wstring set_name(int sel) { return sel == kSetRandom ? L"Random Set" : L"Set " + std::to_wstring(sel + 1); }
+
 struct Settings
 {
 	int playlist = kDefault;
 	bool show_ext = true;       // [Jukebox] ShowFileExtensions (ini only): song names in the editor end in .wem/.wav/.mp3
 	bool random_switch = false; // [Jukebox] RandomSwitchAtMatchPoint (ini only): Random picks a 2nd song at match point
 	std::wstring random_folder; // [Jukebox] RandomFolder: first-level folder of Jukebox Songs, or kVanillaFolder
-	std::map<int, Assign> custom[3];              // stage/scene id -> songs
+	std::map<int, StageSets> custom[3];           // stage/scene id -> its song sets
+	unsigned gen = 0;                             // bumped by every load / change (playback rebuilds its per-entry copy)
 	std::map<std::wstring, int> volume;           // song rel path (or file name) -> 0..300 (100 = default)
 	// [Volume] of a song (user, 2026-11-14): its path inside Jukebox Songs ("Folder\Song.mp3"), or just its file name
 	// ("Song.mp3", as Song Loops.txt matches) - upper / lower case ignored; 100 when not listed
@@ -476,7 +516,7 @@ struct Settings
 		return by_name >= 0 ? by_name : 100;
 	}
 
-	const Assign *assign(int pl, int stage) const
+	const StageSets *sets(int pl, int stage) const
 	{
 		if (pl < kCustom1 || pl > kCustom3)
 			return nullptr;
@@ -553,22 +593,43 @@ inline bool load_settings(Settings &st)
 					size_t dot = k.find(L'.');
 					if (dot == std::wstring::npos || v.empty())
 						break;
+					// Song Sets: "<id>.Early" ... = Set 1 (the keys from before Song Sets); "<id>.Set2.Early" ... = Sets 2-5
+					// (a key present = that slot is assigned; "default" = the game's music); "<id>.Set" = the selector
+					// (1..5 / Random)
 					int id = _wtoi(k.substr(0, dot).c_str());
 					std::wstring part = k.substr(dot + 1);
-					if (_wcsicmp(part.c_str(), L"Early") == 0)
-						s.custom[c][id].early = v;
-					else if (_wcsicmp(part.c_str(), L"Final") == 0)
-						s.custom[c][id].final_ = v;
-					else if (_wcsicmp(part.c_str(), L"EarlyVolume") == 0)
-						s.custom[c][id].early_vol = (std::clamp)(_wtoi(v.c_str()), 0, 300);
-					else if (_wcsicmp(part.c_str(), L"FinalVolume") == 0)
-						s.custom[c][id].final_vol = (std::clamp)(_wtoi(v.c_str()), 0, 300);
-					else if (_wcsicmp(part.c_str(), L"Special") == 0 && has_special(id))
-						s.custom[c][id].special = v;
-					else if (_wcsicmp(part.c_str(), L"SpecialVolume") == 0 && has_special(id))
-						s.custom[c][id].special_vol = (std::clamp)(_wtoi(v.c_str()), 0, 300);
+					if (_wcsicmp(part.c_str(), L"Set") == 0)
+					{
+						int n = _wcsicmp(v.c_str(), L"Random") == 0 ? kSetRandom + 1 : _wtoi(v.c_str());
+						if (n >= 1 && n <= kSetRandom + 1)
+							s.custom[c][id].sel = n - 1;
+						break;
+					}
+					int k_set = 0;
+					if (part.size() > 5 && _wcsnicmp(part.c_str(), L"Set", 3) == 0 && part[4] == L'.')
+					{
+						k_set = part[3] - L'1';
+						if (k_set < 1 || k_set >= kSets)
+							break;
+						part = part.substr(5);
+					}
+					const bool vol = part.size() > 6 && _wcsicmp(part.c_str() + part.size() - 6, L"Volume") == 0;
+					const std::wstring base = vol ? part.substr(0, part.size() - 6) : part;
+					const int slot = _wcsicmp(base.c_str(), L"Early") == 0 ? 0 : _wcsicmp(base.c_str(), L"Final") == 0 ? 1
+					                 : _wcsicmp(base.c_str(), L"Special") == 0 && has_special(id) ? 2 : -1;
+					if (slot < 0)
+						break;
+					StageSets &ss = s.custom[c][id];
+					if (vol)
+						ss.set[k_set].vol(slot) = (std::clamp)(_wtoi(v.c_str()), 0, 300);
+					else
+					{
+						ss.set[k_set].song(slot) = _wcsicmp(v.c_str(), L"default") == 0 ? L"" : v;
+						ss.has[k_set][slot] = true;
+					}
 				}
 	}
+	s.gen = st.gen + 1; // playback rebuilds its per-entry copy (Song Sets)
 	st = std::move(s);
 	return true;
 }
@@ -593,25 +654,33 @@ inline bool save_settings(const Settings &s)
 	for (int c = 0; c < 3; ++c)
 	{
 		o += L"\r\n[" + std::wstring(kPlaylistNames[kCustom1 + c]) + L"]\r\n";
+		if (c == 0)
+			o += L"; Song Sets: <id>.Early / .Final / .Special = Set 1; <id>.Set2.Early ... <id>.Set5.Special = Sets 2-5 (a missing\r\n"
+			     L"; line = unassigned: Set 1's song plays; \"default\" = the game's music); <id>.Set = 1..5 or Random (default 1)\r\n";
 		for (auto &st : kStages)
 		{
 			auto it = s.custom[c].find(st.id);
-			const Assign a = it == s.custom[c].end() ? Assign{} : it->second;
+			const StageSets ss = it == s.custom[c].end() ? StageSets{} : it->second;
+			const std::wstring id = std::to_wstring(st.id);
 			o += L"; " + std::wstring(st.name) + L"\r\n";
-			o += std::to_wstring(st.id) + L".Early=" + a.early + L"\r\n";
-			if (a.early_vol != 100)
-				o += std::to_wstring(st.id) + L".EarlyVolume=" + std::to_wstring(a.early_vol) + L"\r\n";
-			if (!is_scene(st.id))
+			if (ss.sel != 0)
+				o += id + L".Set=" + (ss.sel == kSetRandom ? std::wstring(L"Random") : std::to_wstring(ss.sel + 1)) + L"\r\n";
+			const char *const parts[3] = { "Early", "Final", "Special" };
+			for (int k = 0; k < kSets; ++k)
 			{
-				o += std::to_wstring(st.id) + L".Final=" + a.final_ + L"\r\n";
-				if (a.final_vol != 100)
-					o += std::to_wstring(st.id) + L".FinalVolume=" + std::to_wstring(a.final_vol) + L"\r\n";
-			}
-			if (has_special(st.id)) // the character's song at match point (Lars / Leroy present)
-			{
-				o += std::to_wstring(st.id) + L".Special=" + a.special + L"\r\n";
-				if (a.special_vol != 100)
-					o += std::to_wstring(st.id) + L".SpecialVolume=" + std::to_wstring(a.special_vol) + L"\r\n";
+				const std::wstring pre = id + (k ? L".Set" + std::to_wstring(k + 1) : L"") + L".";
+				for (int slot = 0; slot < 3; ++slot)
+				{
+					if ((slot == 1 && is_scene(st.id)) || (slot == 2 && !has_special(st.id))) // the character's song at match point
+						continue;
+					if (k > 0 && !ss.has[k][slot])
+						continue; // unassigned: no line
+					const std::wstring p = widen(parts[slot]);
+					const std::wstring &song = ss.set[k].song(slot);
+					o += pre + p + L"=" + (k > 0 && song.empty() ? std::wstring(L"default") : song) + L"\r\n";
+					if (ss.set[k].vol(slot) != 100)
+						o += pre + p + L"Volume=" + std::to_wstring(ss.set[k].vol(slot)) + L"\r\n";
+				}
 			}
 		}
 	}
@@ -642,6 +711,7 @@ inline FILETIME g_ini_time{};
 // save the settings and remember the new file time (our own write must not trigger a reload); call with g_mx held
 inline bool save_settings_locked()
 {
+	++g_set.gen; // a change from the menu (Song Sets: playback rebuilds its per-entry copy)
 	if (!save_settings(g_set))
 	{
 		logf("settings: could not save %s", narrow(ini_path()).c_str());

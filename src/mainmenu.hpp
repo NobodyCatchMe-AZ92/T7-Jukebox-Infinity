@@ -413,7 +413,7 @@ inline void guides_restore()
 constexpr const char *kGuidesPlaylists = "<#updown> Select   <#decide> Confirm   <#cancel> Back   <#x> Change 'Random' Playlist Behaviour";
 // Playlist Editor guides per panel (user, 2026-11-14): the Stage Selector; the Song Browser; the Song Browser on the
 // Tekken 7 / Tekken 7 Bonus Tracks folders (+ L3 export)
-constexpr const char *kGuidesEditorStages = "<#updown> Select   <#decide> Confirm   <#cancel> Back   <#menu> Reset All   <#x> Refresh Folders";
+constexpr const char *kGuidesEditorStages = "<#updown> Select   <#decide> Confirm   <#cancel> Back   <#leftright> Change Song Set   <#menu> Reset All   <#x> Refresh Folders";
 #define JB_GUIDES_SONGS "<#updown> Select   <#decide> Confirm   <#cancel> Back   <#x> Refresh Folders   " \
                         "<#y> Preview Song (HOLD: Preview Loop)   <#leftright> Adjust Volume/Change Folder   <#lb><#rb> Change Folder"
 constexpr const char *kGuidesEditorSongs = JB_GUIDES_SONGS;

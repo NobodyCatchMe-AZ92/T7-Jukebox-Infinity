@@ -170,7 +170,8 @@ inline void pinned_text(const std::string &field, const std::string &t, const ch
 // the volume column and the speaker icon sat ~7 px (1440p) above the song names (user screenshot 2026-11-13 16-24-22):
 // both lowered by 5 movie units
 inline float g_volume_dy = 5.0f, g_speaker_dy = 5.0f;
-inline void draw_row(int list, int row, bool selected, const std::string &name, const std::string &right, bool arrows)
+inline void draw_row(int list, int row, bool selected, const std::string &name, const std::string &right, bool arrows,
+                     const char *left = "")
 {
 	std::string p = panel(list, row);
 	goto_stop(p, selected ? "Select" : "Normal");
@@ -180,12 +181,16 @@ inline void draw_row(int list, int row, bool selected, const std::string &name, 
 		text(p + ".ButtonName_mc.DT_BtnName_mc", name);
 	goto_stop(p + ".ButtonValue_mc", "None");
 	goto_stop(p + ".ButtonSymbol_mc", right.empty() ? "None" : "White");
-	if (list == 2)
-		pinned_text(p + ".ButtonSymbol_mc.DT_BtnSymbol_mc", right, ".SetText", g_volume_dy);
+	// both lists: the right column's text pinned + lowered like the Song Browser's volume (Song Sets: "Set N" there)
+	pinned_text(p + ".ButtonSymbol_mc.DT_BtnSymbol_mc", right, ".SetText", g_volume_dy);
+	// Song Sets (user, 2026-11-17): the stage list's "*" moved to the free space left of the name - the row's unused
+	// Operation_mc text (left-aligned; its field starts at row x -240, where the Song Browser's speaker icon sits)
+	goto_stop(p + ".Operation_mc", *left ? "White" : "None");
+	if (*left)
+		text(p + ".Operation_mc.DT_Operation_mc", left);
 	else
-		text(p + ".ButtonSymbol_mc.DT_BtnSymbol_mc", right, ".SetText");
-	for (const char *part : { ".Operation_mc", ".OperationValue_mc" })
-		goto_stop(p + part, "None");
+		g_field_text.erase(p + ".Operation_mc.DT_Operation_mc"); // "None" drops the field; the next "White" re-creates it
+	goto_stop(p + ".OperationValue_mc", "None");
 	goto_stop(p + ".Rep_BtnIcon_mc", "Off");
 	goto_stop(p + ".Arrow_L_mc", arrows ? "On" : "Off");
 	goto_stop(p + ".Arrow_R_mc", arrows ? "On" : "Off");
@@ -252,11 +257,41 @@ inline void speaker_row(int r, bool on)
 // ---- settings access (g_mx) -----------------------------------------------------------------------------
 inline int entry_count() { return int(sizeof kStages / sizeof kStages[0]); }
 inline int stage_id(int entry) { return kStages[entry].id; }
+// Song Sets (user, 2026-11-17): the stage list's right column selects Set 1..5 / Random Set per stage; the editor
+// shows and edits the selected set (Random Set: nothing to edit - A does nothing)
+inline int selected_set(int entry)
+{
+	std::lock_guard<std::mutex> lk(g_mx);
+	const StageSets *ss = g_set.sets(g_playlist, stage_id(entry));
+	return ss ? ss->sel : 0;
+}
+inline void select_set(int entry, int sel)
+{
+	std::lock_guard<std::mutex> lk(g_mx);
+	g_set.custom[g_playlist - kCustom1][stage_id(entry)].sel = sel;
+	save_settings_locked();
+}
+inline bool stage_customised(int entry)
+{
+	std::lock_guard<std::mutex> lk(g_mx);
+	const StageSets *ss = g_set.sets(g_playlist, stage_id(entry));
+	return ss && ss->customised();
+}
+inline bool set_assigned(int entry, int k)
+{
+	std::lock_guard<std::mutex> lk(g_mx);
+	const StageSets *ss = g_set.sets(g_playlist, stage_id(entry));
+	return k == 0 || (ss && k < kSets && ss->assigned(k));
+}
+// the song of a slot in the selected set ("" = the game's music, kUnassignedRel = an unassigned slot of Sets 2-5)
 inline std::wstring assigned(int entry, int slot)
 {
 	std::lock_guard<std::mutex> lk(g_mx);
-	const Assign *a = g_set.assign(g_playlist, stage_id(entry));
-	return a ? a->song(slot) : L"";
+	const StageSets *ss = g_set.sets(g_playlist, stage_id(entry));
+	if (!ss)
+		return L"";
+	const int k = ss->sel == kSetRandom ? 0 : ss->sel;
+	return ss->slot_assigned(k, slot) ? ss->set[k].song(slot) : std::wstring(kUnassignedRel);
 }
 // Volume is PER ASSIGNMENT (user, 2026-11-12): the same song can be 200% on one stage and 50% on another. In the
 // browser, volumes are pending until A saves the song with its volume; B discards them.
@@ -264,18 +299,26 @@ inline std::map<std::wstring, int> g_pending; // song rel -> volume shown/adjust
 inline int assigned_volume(int entry, int slot)
 {
 	std::lock_guard<std::mutex> lk(g_mx);
-	const Assign *a = g_set.assign(g_playlist, stage_id(entry));
-	return a ? a->vol(slot) : 100;
+	const StageSets *ss = g_set.sets(g_playlist, stage_id(entry));
+	if (!ss)
+		return 100;
+	const int k = ss->sel == kSetRandom ? 0 : ss->sel;
+	return ss->slot_assigned(k, slot) ? ss->set[k].vol(slot) : 100;
 }
+// assign a song to a slot of the selected set; kUnassignedRel (Sets 2-5 only) clears the slot
 inline void assign(int entry, int slot, const std::wstring &rel, int vol)
 {
 	std::lock_guard<std::mutex> lk(g_mx);
-	Assign &a = g_set.custom[g_playlist - kCustom1][stage_id(entry)];
-	a.song(slot) = rel;
-	a.vol(slot) = rel.empty() ? 100 : (std::clamp)(vol, 0, 300);
+	StageSets &ss = g_set.custom[g_playlist - kCustom1][stage_id(entry)];
+	const int k = ss.sel == kSetRandom ? 0 : ss.sel;
+	const bool none = is_unassigned_rel(rel);
+	if (k > 0)
+		ss.has[k][slot] = !none;
+	ss.set[k].song(slot) = none ? L"" : rel;
+	ss.set[k].vol(slot) = rel.empty() || none ? 100 : (std::clamp)(vol, 0, 300);
 	save_settings_locked();
 }
-inline void reset_stage(int entry) // both songs back to the game's music (user: no confirmation)
+inline void reset_stage(int entry) // all five sets back to default + Set 1 selected (user, 2026-11-17; no confirmation)
 {
 	std::lock_guard<std::mutex> lk(g_mx);
 	g_set.custom[g_playlist - kCustom1].erase(stage_id(entry));
@@ -298,6 +341,8 @@ inline std::string song_label(const std::wstring &rel)
 {
 	if (rel.empty())
 		return "Default";
+	if (is_unassigned_rel(rel))
+		return "No Song (Unassigned)";
 	if (is_random_rel(rel))
 		return "Random: " + narrow(random_key_name(random_key(rel)));
 	if (std::wstring g = game_song_label(rel); !g.empty())
@@ -348,6 +393,8 @@ inline void draw_left()
 		// top row keeps a short hint.
 		// an assigned file that is gone is marked (user, 2026-11-13); it plays the game's music meanwhile
 		auto mark = [](const std::wstring &rel) {
+			if (is_unassigned_rel(rel))
+				return std::string();
 			if (is_random_rel(rel))
 			{
 				const std::wstring k = random_key(rel);
@@ -363,13 +410,29 @@ inline void draw_left()
 		};
 		const bool scene = is_scene(stage_id(e));
 		const bool special = has_special(stage_id(e)); // Twilight Conflict / Dragon's Nest (user, 2026-11-13)
-		std::wstring n1 = widen(song_label(assigned(e, 0))), n2 = scene ? L"" : widen(song_label(assigned(e, 1)));
-		std::wstring n3 = special ? widen(song_label(assigned(e, 2))) : L"";
+		// Song Sets (user, 2026-11-17): the selected set's songs, "Set N:" first; an unassigned slot plays Set 1's song;
+		// Random Set: just "Random Set"
+		const int sel = selected_set(e);
+		const bool set_ok = sel == kSetRandom || set_assigned(e, sel);
+		auto label = [](const std::wstring &rel) { return is_unassigned_rel(rel) ? std::wstring(L"Set 1's song") : widen(song_label(rel)); };
+		std::wstring n1 = label(assigned(e, 0)), n2 = scene ? L"" : label(assigned(e, 1));
+		std::wstring n3 = special ? label(assigned(e, 2)) : L"";
 		const std::string m1 = mark(assigned(e, 0)), m2 = scene ? "" : mark(assigned(e, 1)), m3 = special ? mark(assigned(e, 2)) : "";
+		const std::string prefix = narrow(set_name(sel)) + ":   ";
 		auto overview = [&]() {
+			if (sel == kSetRandom) // "Random Set - 1, 3": the assigned sets it picks from (user, 2026-11-17)
+			{
+				std::string o = "Random Set - ";
+				for (int k = 0, n = 0; k < kSets; ++k)
+					if (set_assigned(e, k))
+						o += (n++ ? ", " : "") + std::to_string(k + 1);
+				return o;
+			}
+			if (!set_ok)
+				return html(narrow(set_name(sel)) + ": Unassigned - Set 1 plays");
 			if (scene)
-				return html("Song: " + narrow(n1) + m1);
-			std::string o = "Round 1: " + narrow(n1) + m1 + "   |   Final: " + narrow(n2) + m2;
+				return html(prefix + "Song: " + narrow(n1) + m1);
+			std::string o = prefix + "Round 1: " + narrow(n1) + m1 + "   |   Final: " + narrow(n2) + m2;
 			if (special)
 				o += "   |   Special: " + narrow(n3) + m3;
 			return html(o);
@@ -384,10 +447,10 @@ inline void draw_left()
 			const float per_char = g_note_w / float(note.size());
 			const float room = g_field_w - g_note_w - 40; // 40 px gap
 			auto plain_len = [&]() {
-				return scene ? 6 + n1.size() + m1.size()
-				             : 9 + n1.size() + m1.size() + 13 + n2.size() + m2.size() + (special ? 15 + n3.size() + m3.size() : 0);
+				return prefix.size() + (scene ? 6 + n1.size() + m1.size()
+				                              : 9 + n1.size() + m1.size() + 13 + n2.size() + m2.size() + (special ? 15 + n3.size() + m3.size() : 0));
 			};
-			for (int i = 0; i < 96 && float(plain_len()) * per_char * 1.05f > room; ++i)
+			for (int i = 0; i < 96 && set_ok && sel != kSetRandom && float(plain_len()) * per_char * 1.05f > room; ++i)
 			{
 				std::wstring &longer = n1.size() >= n2.size() ? (n1.size() >= n3.size() ? n1 : n3) : (n2.size() >= n3.size() ? n2 : n3);
 				if (longer.size() <= 8)
@@ -414,9 +477,11 @@ inline void draw_left()
 			blank_row(1, r);
 		else
 		{
-			// "*" in the right column: at least one song of this stage / scene is not the default (user, 2026-11-13)
-			const bool custom = !assigned(e, 0).empty() || !assigned(e, 1).empty() || !assigned(e, 2).empty();
-			draw_row(1, r, g_focus == kStagesList && e == g_cursor, narrow(kStages[e].name), custom ? "*" : "", false);
+			// "*" left of the name: any song set of this stage / scene differs from the defaults (user, 2026-11-13 /
+			// 2026-11-17); the right column: the selected song set, with arrows on the highlighted row (Left / Right)
+			const bool sel_row = g_focus == kStagesList && e == g_cursor;
+			draw_row(1, r, sel_row, narrow(kStages[e].name), narrow(set_name(selected_set(e))), sel_row,
+			         stage_customised(e) ? "&nbsp;&nbsp;*" : "");
 		}
 	}
 }
@@ -463,6 +528,9 @@ inline void load_category()
 	g_rows.clear();
 	if (is_t7(g_cat))
 	{
+		// Song Sets (user, 2026-11-17): Sets 2-5 can leave a slot unassigned - the first row of the Tekken 7 folder
+		if (selected_set(g_entry) > 0)
+			g_rows.push_back(Song{ kT7Category, kUnassignedRel, L"No Song (Unassigned)" });
 		for (auto &t : kVanillaTracks) // each stage's 1st / 2nd, menu themes last
 			if (!t.hidden)
 				g_rows.push_back(Song{ kT7Category, track_rel(t), track_title(t) });
@@ -556,6 +624,7 @@ inline void draw_right()
 	std::string head = narrow(kStages[g_entry].name) +
 	                   (scene ? "" : g_slot == 2 ? std::string(" - ") + special_head(stage_id(g_entry)) : g_slot ? " - Final Round" : " - Round 1");
 	int total = song_rows();
+	head += " - " + narrow(set_name(selected_set(g_entry)));                                            // Song Sets
 	head += "  (" + std::to_string((std::max)(g_rcur, 0) + 1) + "/" + std::to_string(total) + ")"; // scroll position
 	text(L + ".WinBase_mc.DT_PLAYER_NUM_mc", html(head));
 	goto_stop(L + ".Panel_ControllerType_mc", g_rcur < 0 ? "Select" : "Normal");
@@ -592,7 +661,7 @@ inline void draw_right()
 				g_mq.row = r;
 				name = name_window(full, g_mq.pos);
 			}
-			if (is_random_cat(g_cat)) // a random pick plays at its own song's volume: none to set here (user)
+			if (is_random_cat(g_cat) || is_unassigned_rel(s.rel)) // a random pick plays at its own song's volume (user); no song: none
 				draw_row(2, r, sel, name, "", false);
 			else
 				draw_row(2, r, sel, name, std::to_string(volume(s.rel)) + "%", sel);
@@ -627,10 +696,11 @@ inline void open_songs()
 	std::wstring cur = assigned(g_entry, g_slot);
 	g_cat = is_random_rel(cur) ? 2 : is_unused_song(cur) ? 1 : 0;
 	for (size_t c = 3; c < g_cats.size(); ++c)
-		if (!cur.empty() && vanilla_bgm(cur) < 0 && !game_wem(cur) && _wcsnicmp(cur.c_str(), g_cats[c].c_str(), g_cats[c].size()) == 0 && !g_cats[c].empty())
+		if (!cur.empty() && !is_unassigned_rel(cur) && vanilla_bgm(cur) < 0 && !game_wem(cur) &&
+		    _wcsnicmp(cur.c_str(), g_cats[c].c_str(), g_cats[c].size()) == 0 && !g_cats[c].empty())
 			g_cat = int(c);
 	g_pending.clear();
-	if (!cur.empty())
+	if (!cur.empty() && !is_unassigned_rel(cur))
 		g_pending[cur] = assigned_volume(g_entry, g_slot); // the current song shows its saved volume
 	load_category();
 	g_rcur = 0;
@@ -895,8 +965,8 @@ inline void bar_down(bool down)
 // dev 36: at build() every GetPosition failed - the song panel's rows only exist once ListArea2_mc plays "Start"
 // (open_songs). So this runs from draw_right while the songs are shown, every time: the first x seen per arrow is its
 // original; the target is original + dx, re-applied whenever the clip reports something else (a re-created clip).
-inline float g_arrow_orig[kVisibleRows][2];
-inline bool g_arrow_known[kVisibleRows][2];
+inline float g_arrow_orig[2][kVisibleRows][2]; // [list 1 / 2][row][left / right]
+inline bool g_arrow_known[2][kVisibleRows][2];
 inline float g_arrow_dx[2] = { 76, -13 }; // tuned by the user in game (2026-11-12)
 inline int g_arrow_logged = 0;
 inline void arrows_reset() // per movie load
@@ -913,15 +983,17 @@ inline void arrows_reset() // per movie load
 // dev 38 (user): arrows then showed only on the row highlighted when the browser opened. Moving an arrow while it is
 // "Off" breaks its later "On" (only the row moved while showing kept working), so only the highlighted row's arrows
 // are moved, after draw_row set them "On".
-inline void place_arrows()
+// Song Sets (user, 2026-11-17): the stage list's set selector uses the same arrows around the same column (list 1)
+inline void place_arrows(int list = 2)
 {
-	int r = g_rcur - g_rtop;
-	if (g_rcur < 1 || r < 0 || r >= kVisibleRows) // row 0 = Default: no volume, no arrows
+	int r = list == 2 ? g_rcur - g_rtop : g_cursor - g_top;
+	if ((list == 2 && g_rcur < 1) || r < 0 || r >= kVisibleRows) // row 0 = Default: no volume, no arrows
 		return;
+	const int li = list - 1;
 	for (int side = 0; side < 2; ++side)
 	{
 		{
-			std::wstring p = widen(panel(2, r)) + (side ? L".Arrow_R_mc" : L".Arrow_L_mc");
+			std::wstring p = widen(panel(list, r)) + (side ? L".Arrow_R_mc" : L".Arrow_L_mc");
 			float x = 0, y = 0;
 			if (!mm::movie_position(g_w, p.c_str(), &x, &y, false))
 			{
@@ -929,9 +1001,9 @@ inline void place_arrows()
 					logf("editor: GetPosition(%s) failed", narrow(p).c_str());
 				continue;
 			}
-			if (!g_arrow_known[r][side])
-				g_arrow_orig[r][side] = x, g_arrow_known[r][side] = true;
-			float nx = g_arrow_orig[r][side] + g_arrow_dx[side];
+			if (!g_arrow_known[li][r][side])
+				g_arrow_orig[li][r][side] = x, g_arrow_known[li][r][side] = true;
+			float nx = g_arrow_orig[li][r][side] + g_arrow_dx[side];
 			if (fabsf(x - nx) < 0.01f)
 				continue;
 			mm::movie_position(g_w, p.c_str(), &nx, &y, true);
@@ -1151,6 +1223,8 @@ inline bool tick(uint32_t pad)
 	mm::info_fallback_tick(); // non-Latin song names in the bar
 	if (g_focus == kSongs)
 		place_arrows(); // cheap once placed (one GetPosition per arrow); catches clips created after "Start"
+	else if (g_focus == kStagesList)
+		place_arrows(1); // the song set selector (Song Sets)
 	const bool start = (pad & kStart) != 0;
 	// X = Refresh Folders (user, 2026-11-12): the lists play out, the Jukebox Songs folder is scanned again (new
 	// folders / files), the lists play in again on the stage list
@@ -1207,6 +1281,17 @@ inline bool tick(uint32_t pad)
 				mm::sfx_cursor();
 			}
 		}
+		// Left / Right: the highlighted stage's song set - Set 1 .. Set 5, Random Set (wraps; saved at once)
+		if (int lr = (pad & kLeft) ? -1 : (pad & kRight) ? 1 : 0)
+		{
+			const int sel = (selected_set(g_cursor) + lr + kSetRandom + 1) % (kSetRandom + 1);
+			select_set(g_cursor, sel);
+			logf("editor: %s -> %s", narrow(kStages[g_cursor].name).c_str(), narrow(set_name(sel)).c_str());
+			draw_left();
+			mm::sfx_cursor();
+		}
+		if ((pad & kA) && selected_set(g_cursor) == kSetRandom)
+			break; // Random Set: nothing to edit (user, 2026-11-17) - pick a set first
 		if (pad & kA)
 		{
 			g_entry = g_cursor;
@@ -1238,7 +1323,7 @@ inline bool tick(uint32_t pad)
 			if (idx == reset_row)
 			{
 				reset_stage(g_entry);
-				logf("editor: %s reset to default", narrow(kStages[g_entry].name).c_str());
+				logf("editor: %s reset to default (all song sets)", narrow(kStages[g_entry].name).c_str());
 			}
 			g_focus = kStagesList;
 			draw_left();
@@ -1315,7 +1400,8 @@ inline bool tick(uint32_t pad)
 			break;
 		}
 		// L3 on a song of the Tekken 7 / Tekken 7 Bonus Tracks folders: export it (elsewhere nothing happens)
-		if ((pad & kL3) && g_rcur > 0 && (is_t7(g_cat) || is_t7_unused(g_cat)) && size_t(g_rcur - 1) < g_rows.size())
+		if ((pad & kL3) && g_rcur > 0 && (is_t7(g_cat) || is_t7_unused(g_cat)) && size_t(g_rcur - 1) < g_rows.size() &&
+		    !is_unassigned_rel(g_rows[size_t(g_rcur - 1)].rel))
 		{
 			preview_stop();
 			open_export_confirm(g_rows[size_t(g_rcur - 1)]);
@@ -1366,7 +1452,7 @@ inline bool tick(uint32_t pad)
 			draw_right();
 			mm::sfx_cursor();
 		}
-		else if (lr && g_rcur > 0 && !is_random_cat(g_cat)) // volume of the highlighted song (none in Random)
+		else if (lr && g_rcur > 0 && !is_random_cat(g_cat) && !is_unassigned_rel(g_rows[size_t(g_rcur - 1)].rel)) // volume (none in Random / No Song)
 		{
 			const Song &s = g_rows[size_t(g_rcur - 1)];
 			g_pending[s.rel] = (std::clamp)(volume(s.rel) + lr * kVolumeStep, 0, 300);
@@ -1394,7 +1480,7 @@ inline bool tick(uint32_t pad)
 			loop_stop_at = 0;
 			if (!g_previewing.empty())
 				preview_stop();
-			else if (g_rcur > 0)
+			else if (g_rcur > 0 && !is_unassigned_rel(g_rows[size_t(g_rcur - 1)].rel)) // No Song (Unassigned): nothing to hear
 			{
 				g_previewing = g_rows[size_t(g_rcur - 1)].rel;
 				g_preview(g_previewing, volume(g_previewing), false);
@@ -1426,8 +1512,9 @@ inline bool tick(uint32_t pad)
 		{
 			preview_stop();
 			std::wstring rel = g_rcur == 0 ? L"" : g_rows[size_t(g_rcur - 1)].rel;
-			assign(g_entry, g_slot, rel, is_random_rel(rel) ? 100 : volume(rel));
-			logf("editor: %s %s = %s (%d%%)", narrow(kStages[g_entry].name).c_str(), g_slot == 2 ? "Special" : g_slot ? "Final" : "Round 1",
+			assign(g_entry, g_slot, rel, is_random_rel(rel) || is_unassigned_rel(rel) ? 100 : volume(rel));
+			logf("editor: %s %s %s = %s (%d%%)", narrow(kStages[g_entry].name).c_str(), narrow(set_name(selected_set(g_entry))).c_str(),
+			     g_slot == 2 ? "Special" : g_slot ? "Final" : "Round 1",
 			     rel.empty() ? "default" : narrow(rel).c_str(), rel.empty() ? 100 : volume(rel));
 			goto_play(panel(2, g_rcur - g_rtop), "Decide");
 			g_focus = kStagesList;
